@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MBTA Predictions</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+    <script>
+        const urlParams = new URLSearchParams(window.location.search);
+        var apiKey = urlParams.get('apiKey');
+        var currentPredictions = [];
+        var updating = false;
+
+        document.addEventListener('DOMContentLoaded', async () => {
+            if (!apiKey) {
+                console.error('API key is missing');
+                document.getElementById('error').style.display = 'block';
+                return;
+            } else {
+                document.getElementById('error').style.display = 'none';
+                await updatePredictions();
+                render();
+                setInterval(render, 13*1000);
+                setInterval(updatePredictions, 61*2000);
+            }
+        });
+
+        const mbta = {
+            async query(endpoint, params) {
+                const url = new URL(`https://api-v3.mbta.com/${endpoint}`);
+                url.searchParams.append('api_key', apiKey);
+                for (const key in params) {
+                    url.searchParams.append(key, params[key]);
+                }
+                const response = await fetch(url);
+                return await response.json();
+            }
+        };
+
+        function minutesUntil(time) { // accepts ISO 8601 string
+            const now = new Date();
+            const targetTime = new Date(time);
+            const diffInMs = targetTime - now;
+            const diffInMinutes = Math.floor(diffInMs / 1000 / 60);
+            return diffInMinutes;
+        }
+
+        async function fetchRoutePredictions(query) {
+            const queryToSend = {...query};
+            delete queryToSend.detail;
+            const rawPredictions = await mbta.query('predictions', queryToSend);
+            const predictions = rawPredictions.data.map(prediction => {
+                return {
+                    route: prediction.relationships.route.data.id,
+                    direction: prediction.attributes.direction_id,
+                    stop: prediction.relationships.stop.data.id,
+                    departure_time: prediction.attributes.departure_time,
+                    detail: query.detail,
+                };
+            });
+            return predictions;
+        }
+
+        const pointsOfInterest = [
+            {'filter[route]': '88', 'filter[stop]': '2580', 'sort': 'departure_time', 'filter[direction_id]': 1, 'page[limit]': '5',
+                'detail': 'Jay St'
+             },
+            {'filter[route]': '89', 'filter[stop]': '2695', 'sort': 'departure_time', 'filter[direction_id]': 1, 'page[limit]': '5',
+                'detail': 'Powderhouse'
+             },
+            {'filter[route]': 'Red', 'filter[stop]': 'place-davis', 'filter[direction_id]': 1, 'sort': 'departure_time', 'page[limit]': '3',
+                'detail': 'Davis'
+             },
+            //{'filter[route]': 'Green', 'filter[stop]': 'place-balsq', 'filter[direction_id]': 1, 'sort': 'departure_time' },
+        ]
+            
+        async function updatePredictions() {
+            console.log("updatePredictions");
+            updating = true;            
+            const allPredictions = await Promise.all(pointsOfInterest.map(fetchRoutePredictions));
+            currentPredictions = allPredictions.flat();
+            updating = false;
+        }
+
+        function render() {
+            if (updating) {
+                return;
+            }
+            console.log("render");
+            //console.log(currentPredictions);
+            const wrapper = d3.select('#predictions');
+            wrapper.html(''); // Clear previous predictions
+
+            currentPredictions.forEach(p => p.relative_time = minutesUntil(p.departure_time));
+            currentPredictions = currentPredictions.filter(prediction => prediction.relative_time > 0 && prediction.relative_time < 30);
+
+            const items = wrapper.selectAll('li').data(currentPredictions, d => d.route + d.stop + d.direction);
+
+            // Enter selection: for new elements
+            const enterSelection = items.enter().append('li');
+            enterSelection.attr('class', prediction => isNaN(prediction.route) ? 'subway' : 'bus');
+            enterSelection.attr('data-route', prediction => prediction.route);
+            enterSelection.append('b').text(prediction => prediction.route);
+            enterSelection.append('em').text(prediction => `${prediction.relative_time} mins`);
+            enterSelection.append('i').text(prediction => ` @ ${prediction.detail}`);
+
+            // Update selection: for existing elements
+            items.select('em').text(prediction => `${prediction.relative_time} mins`);
+
+            // Exit selection: for removed elements
+            items.exit().transition().duration(500)
+                .style('opacity', 0)
+                .style('height', 0)
+                .remove();
+        }
+
+    </script>
+    <style>
+        body {
+            background-color: black;
+            color: black;
+        }
+        main {
+            padding: 0.5rem;
+            width: 120px;
+            text-align: center;
+            font-size: 1.5rem;
+        }
+        img {
+            margin: 5px
+        }
+        ul {
+            list-style-type: none;
+            padding: 0;
+        }
+        li {
+            display: inline-block;
+            min-width: 100px;
+            text-align: center;
+            padding: 5px;
+            margin-bottom: 15px;
+        }
+        li b {
+            color: black;
+            width: 100px;
+            display: block;
+            font-size: 2rem;
+            font-family: Helvetica, sans-serif;
+        } 
+        li em {
+            display: block;
+        }
+        li i {
+            display: block;
+            font-size: 0.75rem;
+        }
+        li.bus{
+            background-color: #eeeeee;
+        }
+        li[data-route="Green"] {
+            background-color: green;
+        }
+        li[data-route="Red"] {
+            background-color: red;
+        }
+        #error {
+            text-align: center;
+        }
+</style>
+</head>
+
+<body>
+    <main>
+        <img src="mbta-logo-white.png" width="100%" alt="MBTA Logo">
+        <div id="error">🚨 ❌ 🔑</div>
+        <ul id="predictions"></ul>
+    </main>
+</body>
+
+</html>
